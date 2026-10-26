@@ -1,6 +1,10 @@
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from pathlib import Path
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -79,3 +83,14 @@ def eliminar_producto(producto_id: int, db: DbSession):
     producto = obtener_o_404(db, producto_id)
     db.delete(producto)
     db.commit()
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/{ruta:path}", include_in_schema=False)
+    def frontend(ruta: str):
+        archivo = (STATIC_DIR / ruta).resolve()
+        if ruta and archivo.is_file() and STATIC_DIR.resolve() in archivo.parents:
+            return FileResponse(archivo)
+        return FileResponse(STATIC_DIR / "index.html")

@@ -84,7 +84,7 @@ function App() {
     <>
       <header className="banda">
         <div className="banda-interior">
-          <h1>Inventario de productos</h1>
+          <h1>CI/CD automático</h1>
         </div>
       </header>
 

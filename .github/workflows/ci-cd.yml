@@ -54,3 +54,80 @@ jobs:
             -e DATABASE_URL \
             -e TEST_DATABASE_URL \
             crud-app:ci python -m pytest -v
+
+  desplegar:
+    name: Desplegar en Cloud Run
+    needs: verificar
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      id-token: write
+
+    concurrency:
+      group: desplegar-${{ github.ref_name }}
+      cancel-in-progress: false
+
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
+      RUNTIME_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v6
+
+      - name: Preparar nombres del ambiente
+        run: |
+          echo "SERVICE=app-${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "DB_SECRET=database-url-${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+          echo "IMAGE=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/crud-app:${GITHUB_REF_NAME}-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Construir imagen para desplegar
+        run: docker build -t "$IMAGE" .
+
+      - name: Autenticarse en Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Preparar Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Autenticar Docker en Artifact Registry
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Publicar imagen
+        run: docker push "$IMAGE"
+
+      - name: Desplegar aplicación
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --image="$IMAGE" \
+            --service-account="$RUNTIME_ACCOUNT" \
+            --set-secrets="DATABASE_URL=${DB_SECRET}:1" \
+            --port=8080 \
+            --cpu=1 \
+            --memory=512Mi \
+            --min-instances=0 \
+            --max-instances=1 \
+            --concurrency=20 \
+            --timeout=300 \
+            --quiet
+
+      - name: Mostrar URL del servicio
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --format='value(status.url)')
+          echo "### Ambiente: ${GITHUB_REF_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          echo "$SERVICE_URL" >> "$GITHUB_STEP_SUMMARY"

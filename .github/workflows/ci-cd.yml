@@ -1,0 +1,56 @@
+name: CI/CD Inventario
+
+on:
+  push:
+    branches: [testing, main]
+  pull_request:
+    branches: [testing, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Compilar y probar
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crud_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d crud_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/crud_test
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/crud_test
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v6
+
+      - name: Construir React y backend
+        run: docker build -t crud-app:ci .
+
+      - name: Comprobar migración
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL \
+            crud-app:ci alembic upgrade head
+
+      - name: Ejecutar pruebas
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_URL \
+            -e TEST_DATABASE_URL \
+            crud-app:ci python -m pytest -v
